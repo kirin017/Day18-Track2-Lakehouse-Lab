@@ -1,63 +1,85 @@
-## Day 18 Lakehouse Lab — student UX
+## Day 18 Lakehouse Lab — student UX (Windows / PowerShell)
 ## Two paths: lightweight (default, pure Python) and Spark (Docker, optional).
 
-VENV       := .venv
-PY         := $(VENV)/bin/python
-PIP        := $(VENV)/bin/pip
-JUPYTER    := $(VENV)/bin/jupyter
-JUPYTEXT   := $(VENV)/bin/jupytext
-COMPOSE    := docker compose -f docker/docker-compose.yml
+SHELL        := powershell.exe
+.SHELLFLAGS  := -NoProfile -NonInteractive -Command
+
+VENV         := .venv
+PY           := $(VENV)/Scripts/python.exe
+PIP          := $(VENV)/Scripts/pip.exe
+JUPYTER      := $(VENV)/Scripts/jupyter.exe
+JUPYTEXT     := $(VENV)/Scripts/jupytext.exe
+COMPOSE      := docker compose -f docker/docker-compose.yml
 
 .DEFAULT_GOAL := help
 
+# ─────────────────────────────────────────────────────────────
+# Help
+# ─────────────────────────────────────────────────────────────
+
 help: ## Show this help
-	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n\nLightweight path (default — no Docker):\n"} \
-	      /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
+	@Write-Host ""
+	@Write-Host "Usage:  make <target>"
+	@Write-Host ""
+	@Write-Host "Lightweight path (default, no Docker):"
+	@Write-Host "  setup         [lite] Create venv + install deps"
+	@Write-Host "  smoke         [lite] 5-second end-to-end smoke test"
+	@Write-Host "  lab           [lite] Open Jupyter Lab on http://localhost:8888"
+	@Write-Host "  data          [lite] Generate 200K-row Bronze sample for NB4"
+	@Write-Host "  clean         [lite] Wipe venv + lakehouse data"
+	@Write-Host ""
+	@Write-Host "Spark / Docker path (optional):"
+	@Write-Host "  spark-up      [spark] Start MinIO + Spark/Jupyter (Docker)"
+	@Write-Host "  spark-smoke   [spark] Smoke test inside Spark container"
+	@Write-Host "  spark-data    [spark] Generate 1M-row Bronze (Spark)"
+	@Write-Host "  spark-down    [spark] Stop Docker stack"
+	@Write-Host "  spark-clean   [spark] Stop AND wipe MinIO + ivy cache"
+	@Write-Host ""
 
 # ─────────────────────────────────────────────────────────────
 # Lightweight path (default) — pure Python, no Docker, no JVM
 # ─────────────────────────────────────────────────────────────
 
 setup: ## [lite] Create venv + install deps (~80 MB, ~10s with pip / ~2s with uv)
-	@command -v uv >/dev/null 2>&1 && uv venv $(VENV) || python3 -m venv $(VENV)
-	@command -v uv >/dev/null 2>&1 && uv pip install --python $(PY) -r requirements.txt \
-	  || $(PIP) install -q -r requirements.txt
-	@$(JUPYTEXT) --to notebook --update notebooks/*.py 2>/dev/null || $(JUPYTEXT) --to notebook notebooks/*.py
-	@echo ""
-	@echo "  ✓ Setup complete. Run 'make smoke' then 'make lab'."
+	@if (Get-Command uv -ErrorAction SilentlyContinue) { uv venv $(VENV) } else { python -m venv $(VENV) }
+	@if (Get-Command uv -ErrorAction SilentlyContinue) { uv pip install --python "$(PY)" -r requirements.txt } else { & "$(PIP)" install -q -r requirements.txt }
+	@try { Get-ChildItem notebooks -Filter *.py | ForEach-Object { & "$(JUPYTEXT)" --to notebook --update $$_.FullName } } catch {}
+	@Write-Host ""; Write-Host "  OK Setup complete. Run 'make smoke' then 'make lab'."
 
 smoke: ## [lite] 5-second end-to-end smoke test
-	@$(PY) scripts/verify_lite.py
+	@& "$(PY)" scripts/verify_lite.py
 
 lab: ## [lite] Open Jupyter Lab on http://localhost:8888
-	@$(JUPYTEXT) --to notebook --update notebooks/*.py 2>/dev/null || true
-	@$(JUPYTER) lab --notebook-dir=notebooks --ServerApp.token='' --no-browser
+	@try { Get-ChildItem notebooks -Filter *.py | ForEach-Object { & "$(JUPYTEXT)" --to notebook --update $$_.FullName } } catch {}
+	@& "$(JUPYTER)" lab --notebook-dir=notebooks --ServerApp.token='' --no-browser
 
 data: ## [lite] Generate 200K-row Bronze sample for NB4
-	@$(PY) scripts/generate_data_lite.py
+	@& "$(PY)" scripts/generate_data_lite.py
 
 clean: ## [lite] Wipe venv + lakehouse data
-	rm -rf $(VENV) _lakehouse notebooks/.ipynb_checkpoints
+	@Remove-Item -Recurse -Force -ErrorAction SilentlyContinue "$(VENV)"
+	@Remove-Item -Recurse -Force -ErrorAction SilentlyContinue "_lakehouse"
+	@Remove-Item -Recurse -Force -ErrorAction SilentlyContinue "notebooks/.ipynb_checkpoints"
 
 # ─────────────────────────────────────────────────────────────
 # Spark + Docker path (optional, production-fidelity)
 # ─────────────────────────────────────────────────────────────
 
 spark-up: ## [spark] Start MinIO + Spark/Jupyter (Docker — first run pulls ~2 GB)
-	$(COMPOSE) up -d
-	@echo "  Jupyter → http://localhost:8888 (token: lakehouse)"
-	@echo "  MinIO   → http://localhost:9001 (minioadmin / minioadmin)"
+	@$(COMPOSE) up -d
+	@Write-Host "  Jupyter -> http://localhost:8888 (token: lakehouse)"
+	@Write-Host "  MinIO   -> http://localhost:9001 (minioadmin / minioadmin)"
 
 spark-smoke: ## [spark] Smoke test inside Spark container
-	$(COMPOSE) exec -T spark python /workspace/scripts/verify.py
+	@$(COMPOSE) exec -T spark python /workspace/scripts/verify.py
 
 spark-data: ## [spark] Generate 1M-row Bronze (Spark version)
-	$(COMPOSE) exec -T spark python /workspace/scripts/generate_data.py
+	@$(COMPOSE) exec -T spark python /workspace/scripts/generate_data.py
 
 spark-down: ## [spark] Stop Docker stack (data persists)
-	$(COMPOSE) down
+	@$(COMPOSE) down
 
 spark-clean: ## [spark] Stop AND wipe MinIO + ivy cache
-	$(COMPOSE) down -v
+	@$(COMPOSE) down -v
 
 .PHONY: help setup smoke lab data clean spark-up spark-smoke spark-data spark-down spark-clean
